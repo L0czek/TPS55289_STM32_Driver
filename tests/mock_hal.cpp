@@ -11,9 +11,13 @@
 
 #include "tps55289.hpp"
 #include <cstdint>
+#include <cstring>
 
 // Global I2C handle instance (referenced by test_main.cpp)
 I2C_HandleTypeDef hi2c1;
+
+// Simple register storage for testing
+static uint8_t mock_registers[256] = {0};
 
 // Mock HAL functions - all stub implementations
 extern "C" {
@@ -31,11 +35,14 @@ HAL_StatusTypeDef HAL_I2C_Mem_Write(I2C_HandleTypeDef* hi2c, uint16_t DevAddress
                                      uint8_t* pData, uint16_t Size, uint32_t Timeout) {
     (void)hi2c;
     (void)DevAddress;
-    (void)MemAddress;
     (void)MemAddSize;
-    (void)pData;
-    (void)Size;
     (void)Timeout;
+    
+    // Store the written data in our mock register map
+    for (uint16_t i = 0; i < Size; i++) {
+        mock_registers[MemAddress + i] = pData[i];
+    }
+    
     return HAL_OK;
 }
 
@@ -44,14 +51,16 @@ HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef* hi2c, uint16_t DevAddress,
                                     uint8_t* pData, uint16_t Size, uint32_t Timeout) {
     (void)hi2c;
     (void)DevAddress;
-    (void)MemAddress;
     (void)MemAddSize;
-    (void)pData;
-    (void)Size;
     (void)Timeout;
-    if (pData) {
-        *pData = 0;
+    
+    // Return the stored register values - read Size bytes starting at MemAddress
+    if (pData && MemAddress < 256) {
+        for (uint16_t i = 0; i < Size; i++) {
+            pData[i] = mock_registers[MemAddress + i];
+        }
     }
+    
     return HAL_OK;
 }
 

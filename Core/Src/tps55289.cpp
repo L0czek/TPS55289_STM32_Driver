@@ -72,6 +72,19 @@ tps55289::expected<uint8_t> TPS55289::read_register(uint8_t register_addr) {
     return value;
 }
 
+uint8_t TPS55289::read_register_const(uint8_t register_addr) const {
+    if (!hi2c_) {
+        return 0;
+    }
+
+    uint8_t value = 0;
+    HAL_StatusTypeDef status = HAL_I2C_Mem_Read(hi2c_, (address_ << 1),
+                                                 register_addr, I2C_MEMADD_SIZE_8BIT,
+                                                 &value, 1, TPS55289_TIMEOUT_MS);
+    (void)status;  // Ignore status for const reads - we just return 0 on error
+    return value;
+}
+
 tps55289::expected<void> TPS55289::update_register_bits(uint8_t register_addr, uint8_t mask, uint8_t value) {
     auto current_opt = read_register(register_addr);
     if (!current_opt) {
@@ -381,9 +394,9 @@ tps55289::expected<void> TPS55289::set_feedback_mode(FeedbackMode mode) {
 }
 
 FeedbackMode TPS55289::get_feedback_mode() const {
-    // Const method - will need non-const read in real implementation
-    (void)TPS55289_REG_VOUT_FS;
-    return FeedbackMode::Internal;
+    // Read the VOUT_FS register to get the feedback mode
+    uint8_t reg = read_register_const(TPS55289_REG_VOUT_FS);
+    return (reg & TPS55289_VOUT_FS_FB) ? FeedbackMode::External : FeedbackMode::Internal;
 }
 
 tps55289::expected<void> TPS55289::set_internal_feedback_ratio(uint8_t bits) {

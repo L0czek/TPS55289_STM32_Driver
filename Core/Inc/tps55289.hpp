@@ -676,7 +676,7 @@ public:
     void set_external_feedback_ratio(float ratio) { external_feedback_ratio_ = ratio; }
 
 private:
-    I2C_HandleTypeDef* hi2c_;
+    mutable I2C_HandleTypeDef* hi2c_;
     uint8_t address_;
     float sense_resistor_ohms_;
     float external_feedback_ratio_;
