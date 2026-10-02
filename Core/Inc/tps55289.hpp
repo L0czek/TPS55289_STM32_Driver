@@ -103,32 +103,65 @@ constexpr uint8_t TPS55289_REG_STATUS       = 0x07;
 constexpr uint8_t TPS55289_ADDRESS_MODE_HIGH = 0x74;
 constexpr uint8_t TPS55289_ADDRESS_MODE_LOW  = 0x75;
 
-// Bit masks
-constexpr uint8_t TPS55289_IOUT_LIMIT_EN      = 0x80;
-constexpr uint8_t TPS55289_IOUT_LIMIT_SETTING = 0x7F;
+// Bit masks - field extraction masks for reading/writing specific bits
+constexpr uint8_t TPS55289_IOUT_LIMIT_EN_MASK      = 0x80;
+constexpr uint8_t TPS55289_IOUT_LIMIT_SETTING_MASK = 0x7F;
 
-constexpr uint8_t TPS55289_VOUT_SR_OCP_DELAY = 0x30;
-constexpr uint8_t TPS55289_VOUT_SR_SLEW      = 0x03;
+// VOUT_SR register field masks
+constexpr uint8_t TPS55289_VOUT_SR_OCP_DELAY_MASK = 0x30;  // Bits 5-4
+constexpr uint8_t TPS55289_VOUT_SR_SLEW_MASK      = 0x03;  // Bits 1-0
 
-constexpr uint8_t TPS55289_VOUT_FS_FB      = 0x80;
-constexpr uint8_t TPS55289_VOUT_FS_INTFB   = 0x03;
+// VOUT_FS register field masks
+constexpr uint8_t TPS55289_VOUT_FS_FB_MASK      = 0x80;   // Bit 7
+constexpr uint8_t TPS55289_VOUT_FS_INTFB_MASK   = 0x03;   // Bits 1-0
 
-constexpr uint8_t TPS55289_CDC_SC_MASK   = 0x80;
-constexpr uint8_t TPS55289_CDC_OCP_MASK  = 0x40;
-constexpr uint8_t TPS55289_CDC_OVP_MASK  = 0x20;
-constexpr uint8_t TPS55289_CDC_OPTION    = 0x08;
-constexpr uint8_t TPS55289_CDC_SETTING   = 0x07;
+// CDC register field masks
+constexpr uint8_t TPS55289_CDC_SC_MASK_MASK   = 0x80;  // Bit 7
+constexpr uint8_t TPS55289_CDC_OCP_MASK_MASK  = 0x40;  // Bit 6
+constexpr uint8_t TPS55289_CDC_OVP_MASK_MASK  = 0x20;  // Bit 5
+constexpr uint8_t TPS55289_CDC_OPTION_MASK    = 0x08;  // Bit 3
+constexpr uint8_t TPS55289_CDC_SETTING_MASK   = 0x07;  // Bits 2-0
 
-constexpr uint8_t TPS55289_MODE_OE      = 0x80;
-constexpr uint8_t TPS55289_MODE_FSWDBL  = 0x40;
-constexpr uint8_t TPS55289_MODE_HICCUP  = 0x20;
-constexpr uint8_t TPS55289_MODE_DISCHG  = 0x10;
-constexpr uint8_t TPS55289_MODE_FPWM    = 0x02;
+// MODE register field masks
+constexpr uint8_t TPS55289_MODE_OE_MASK      = 0x80;  // Bit 7
+constexpr uint8_t TPS55289_MODE_FSWDBL_MASK  = 0x40;  // Bit 6
+constexpr uint8_t TPS55289_MODE_HICCUP_MASK  = 0x20;  // Bit 5
+constexpr uint8_t TPS55289_MODE_DISCHG_MASK  = 0x10;  // Bit 4
+constexpr uint8_t TPS55289_MODE_FPWM_MASK    = 0x02;  // Bit 1
 
-constexpr uint8_t TPS55289_STATUS_SCP = 0x80;
-constexpr uint8_t TPS55289_STATUS_OCP = 0x40;
-constexpr uint8_t TPS55289_STATUS_OVP = 0x20;
-constexpr uint8_t TPS55289_STATUS_MODE = 0x03;
+// STATUS register field masks
+constexpr uint8_t TPS55289_STATUS_SCP_MASK   = 0x80;  // Bit 7
+constexpr uint8_t TPS55289_STATUS_OCP_MASK   = 0x40;  // Bit 6
+constexpr uint8_t TPS55289_STATUS_OVP_MASK   = 0x20;  // Bit 5
+constexpr uint8_t TPS55289_STATUS_MODE_MASK  = 0x03;  // Bits 1-0
+
+// Named values for OCP_DELAY (bits 5-4 of VOUT_SR)
+constexpr uint8_t TPS55289_OCP_DELAY_128US   = 0x00;  // 128 µs
+constexpr uint8_t TPS55289_OCP_DELAY_3072US  = 0x01;  // 1.024 × 3 ms
+constexpr uint8_t TPS55289_OCP_DELAY_6144US  = 0x02;  // 1.024 × 6 ms
+constexpr uint8_t TPS55289_OCP_DELAY_12288US = 0x03;  // 1.024 × 12 ms
+
+// Named values for SR (slew rate, bits 1-0 of VOUT_SR)
+constexpr uint8_t TPS55289_SLEW_RATE_1P25MV  = 0x00;  // 1.25 mV/µs
+constexpr uint8_t TPS55289_SLEW_RATE_2P5MV   = 0x01;  // 2.5 mV/µs (default)
+constexpr uint8_t TPS55289_SLEW_RATE_5P0MV   = 0x02;  // 5 mV/µs
+constexpr uint8_t TPS55289_SLEW_RATE_10P0MV  = 0x03;  // 10 mV/µs
+
+// Named values for INTFB (bits 1-0 of VOUT_FS)
+constexpr uint8_t TPS55289_INTFB_0P2256        = 0x00;  // 0.2256
+constexpr uint8_t TPS55289_INTFB_0P1128        = 0x01;  // 0.1128
+constexpr uint8_t TPS55289_INTFB_0P0752        = 0x02;  // 0.0752
+constexpr uint8_t TPS55289_INTFB_0P0564        = 0x03;  // 0.0564 (default)
+
+// Named values for CDC setting (bits 2-0 of CDC register)
+constexpr uint8_t TPS55289_CDC_0V_COMP       = 0x00;  // 0-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P1V_COMP     = 0x01;  // 0.1-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P2V_COMP     = 0x02;  // 0.2-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P3V_COMP     = 0x03;  // 0.3-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P4V_COMP     = 0x04;  // 0.4-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P5V_COMP     = 0x05;  // 0.5-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P6V_COMP     = 0x06;  // 0.6-V output voltage rise
+constexpr uint8_t TPS55289_CDC_0P7V_COMP     = 0x07;  // 0.7-V output voltage rise
 
 // Include custom expected for C++17 compatibility
 // This must be before the namespace definition so std:: headers are not wrapped
@@ -246,6 +279,13 @@ public:
     expected<uint8_t> read_register(uint8_t register_addr);
 
     /**
+     * @brief Read a register value (const, does not modify state)
+     * @param register_addr Register address
+     * @return expected<uint8_t> - register value or error
+     */
+    expected<uint8_t> read_register(uint8_t register_addr) const;
+
+    /**
      * @brief Update specific bits in a register (non-const, modifies initialized flag)
      * @param register_addr Register address
      * @param mask Bit mask for the field
@@ -319,7 +359,7 @@ public:
      * @param code REF code
      * @return float VREF in millivolts
      */
-    float ref_code_to_vref_mv(uint16_t code);
+    float ref_code_to_vref_mv(uint16_t code) const;
 
     /**
      * @brief Write REF code to registers
@@ -332,7 +372,7 @@ public:
      * @brief Read REF code from registers
      * @return expected<uint16_t> - REF code or error
      */
-    expected<uint16_t> read_ref_code();
+    expected<uint16_t> read_ref_code() const;
 
     /**
      * @brief Set reference voltage in mV
@@ -345,7 +385,7 @@ public:
      * @brief Get reference voltage in mV
      * @return expected<float> - reference voltage or error
      */
-    expected<float> get_reference_voltage_mv();
+    expected<float> get_reference_voltage_mv() const;
 
     /**
      * @brief Set output voltage
@@ -358,7 +398,7 @@ public:
      * @brief Get output voltage
      * @return expected<float> - output voltage or error
      */
-    expected<float> get_output_voltage();
+    expected<float> get_output_voltage() const;
 
     // =============================================================================
     // Current limit
@@ -393,7 +433,7 @@ public:
      * @brief Get current limit sense voltage
      * @return expected<float> - sense voltage in mV or error
      */
-    expected<float> get_current_limit_voltage_mv();
+    expected<float> get_current_limit_voltage_mv() const;
 
     /**
      * @brief Set output current limit
@@ -408,7 +448,7 @@ public:
      * @param sense_resistor_ohms Sense resistor value in ohms (optional, uses default if not provided)
      * @return expected<float> - current limit in amperes or error
      */
-    expected<float> get_output_current_limit(float sense_resistor_ohms = -1.0f);
+    expected<float> get_output_current_limit(float sense_resistor_ohms = -1.0f) const;
 
     // =============================================================================
     // Slew rate and OCP delay
