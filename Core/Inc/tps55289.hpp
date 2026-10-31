@@ -14,7 +14,6 @@
 #include <array>
 #include <string>
 #include <cstring>
-#include <stdexcept>
 #include <system_error>
 
 // TPS55289 configuration
@@ -163,8 +162,7 @@ constexpr uint8_t TPS55289_CDC_0P5V_COMP     = 0x05;  // 0.5-V output voltage ri
 constexpr uint8_t TPS55289_CDC_0P6V_COMP     = 0x06;  // 0.6-V output voltage rise
 constexpr uint8_t TPS55289_CDC_0P7V_COMP     = 0x07;  // 0.7-V output voltage rise
 
-// Include custom expected for C++17 compatibility
-// This must be before the namespace definition so std:: headers are not wrapped
+// std::expected alias (driver is built as C++23)
 #include "tps55289_expected.hpp"
 
 namespace tps55289 {
@@ -179,7 +177,8 @@ enum class ErrorCode : uint8_t {
     InvalidAddress,
     InvalidRegister,
     NotInitialized,
-    I2CError
+    I2CError,
+    InvalidParameter
 };
 
 /**
@@ -218,6 +217,7 @@ public:
             case ErrorCode::InvalidRegister: return "Invalid register address";
             case ErrorCode::NotInitialized: return "Device not initialized";
             case ErrorCode::I2CError: return "I2C communication error";
+            case ErrorCode::InvalidParameter: return "Invalid parameter";
             default: return "Unknown error";
         }
     }
@@ -239,521 +239,166 @@ inline std::error_code make_error_code(ErrorCode ec) {
 }
 
 /**
- * @brief TPS55289 Driver Class
+ * @brief Decoded STATUS register (07h)
  *
- * This class provides a modern C++ interface for the TPS55289 buck-boost converter.
- * It manages I2C communication internally and provides methods for all
- * TPS55289 register operations with proper error handling via expected.
+ * Reading 07h clears the SCP, OCP and OVP bits (datasheet 7.6.7), so the
+ * register must be read once and decoded from that single value.
+ */
+struct Status {
+    bool scp;
+    bool ocp;
+    bool ovp;
+    OperatingMode mode;
+
+    bool any_fault() const { return scp || ocp || ovp; }
+};
+
+/**
+ * @brief Fault indications that can be masked in the CDC register (05h)
+ */
+enum class FaultIndication : uint8_t {
+    ShortCircuit = 0x80,   // SC_MASK
+    OverCurrent  = 0x40,   // OCP_MASK
+    OverVoltage  = 0x20    // OVP_MASK
+};
+
+/**
+ * @brief TPS55289 buck-boost converter driver
+ *
+ * Call initialize() first: it checks the device answers and caches the active
+ * feedback configuration. The output-voltage path uses only that cached ratio,
+ * so a failed I2C read can never change the programmed voltage.
  */
 class TPS55289 {
 public:
-    /**
-     * @brief Construct TPS55289 driver
-     * @param hi2c Pointer to I2C handle
-     * @param address I2C address (default: 0x74 for MODE pin high)
-     */
     explicit TPS55289(I2C_HandleTypeDef* hi2c, uint8_t address = TPS55289_ADDRESS_MODE_HIGH);
-
-    /**
-     * @brief Destroy TPS55289 driver
-     */
     ~TPS55289();
 
-    // =============================================================================
-    // Low-level I2C operations
-    // =============================================================================
-
-    /**
-     * @brief Write a register value (non-const, modifies initialized flag)
-     * @param register_addr Register address
-     * @param value Value to write
-     * @return expected<void> - error on failure
-     */
+    // ---- Low-level register access -------------------------------------------------
     expected<void> write_register(uint8_t register_addr, uint8_t value);
-
-    /**
-     * @brief Read a register value (non-const, modifies initialized flag)
-     * @param register_addr Register address
-     * @return expected<uint8_t> - register value or error
-     */
-    expected<uint8_t> read_register(uint8_t register_addr);
-
-    /**
-     * @brief Read a register value (const, does not modify state)
-     * @param register_addr Register address
-     * @return expected<uint8_t> - register value or error
-     */
     expected<uint8_t> read_register(uint8_t register_addr) const;
-
-    /**
-     * @brief Update specific bits in a register (non-const, modifies initialized flag)
-     * @param register_addr Register address
-     * @param mask Bit mask for the field
-     * @param value New value for the field (aligned to mask)
-     * @return expected<void> - error on failure
-     */
     expected<void> update_register_bits(uint8_t register_addr, uint8_t mask, uint8_t value);
 
+    // ---- Device control ------------------------------------------------------------
     /**
-     * @brief Read a register value (const, does not modify state)
-     * @param register_addr Register address
-     * @return uint8_t - register value
+     * @brief Probe the device and cache the feedback configuration (VOUT_FS).
+     *        Does not modify any register.
      */
-    uint8_t read_register_const(uint8_t register_addr) const;
-
-    // =============================================================================
-    // Device control
-    // =============================================================================
+    expected<void> initialize();
 
     /**
-     * @brief Verify device is present on I2C bus
-     * @return expected<bool> - true if device found, error on failure
+     * @brief Check the device answers on the bus (read-only, MODE register read)
      */
-    expected<bool> verify_device_present();
+    expected<bool> verify_device_present() const;
 
-    /**
-     * @brief Enable the output
-     * @return expected<void> - error on failure
-     */
     expected<void> enable();
-
-    /**
-     * @brief Disable the output
-     * @return expected<void> - error on failure
-     */
     expected<void> disable();
-
-    /**
-     * @brief Check if output is enabled
-     * @return bool - true if enabled
-     */
-    bool output_enabled() const;
-
-    /**
-     * @brief Check if device is initialized
-     * @return bool - true if initialized
-     */
+    expected<bool> output_enabled() const;
     bool is_initialized() const { return initialized_; }
 
-    // =============================================================================
-    // Reference voltage and output voltage
-    // =============================================================================
+    // ---- Reference voltage and output voltage ----------------------------------------
+    /** @brief VREF [mV] -> REF code, rounded and clamped to 0..0x7FE (NaN -> 0) */
+    static uint16_t vref_mv_to_code(float vref_mv);
+    static float ref_code_to_vref_mv(uint16_t code);
 
-    /**
-     * @brief Convert output voltage to REF code
-     * @param voltage Output voltage in volts
-     * @param feedback_ratio Feedback ratio (optional, uses current setting if not provided)
-     * @return uint16_t REF code
-     */
-    uint16_t voltage_to_ref_code(float voltage, float feedback_ratio = -1.0f);
-
-    /**
-     * @brief Convert VREF in mV to REF code
-     * @param vref_mv VREF in millivolts
-     * @return uint16_t REF code
-     */
-    uint16_t vref_mv_to_code(float vref_mv);
-
-    /**
-     * @brief Convert REF code to VREF in mV
-     * @param code REF code
-     * @return float VREF in millivolts
-     */
-    float ref_code_to_vref_mv(uint16_t code) const;
-
-    /**
-     * @brief Write REF code to registers
-     * @param code REF code (0-0x7FF)
-     * @return expected<void> - error on failure
-     */
     expected<void> write_ref_code(uint16_t code);
-
-    /**
-     * @brief Read REF code from registers
-     * @return expected<uint16_t> - REF code or error
-     */
     expected<uint16_t> read_ref_code() const;
-
-    /**
-     * @brief Set reference voltage in mV
-     * @param vref_mv Reference voltage in millivolts
-     * @return expected<void> - error on failure
-     */
     expected<void> set_reference_voltage_mv(float vref_mv);
-
-    /**
-     * @brief Get reference voltage in mV
-     * @return expected<float> - reference voltage or error
-     */
     expected<float> get_reference_voltage_mv() const;
 
     /**
-     * @brief Set output voltage
-     * @param voltage Output voltage in volts
-     * @return expected<float> - actual voltage set or error
+     * @brief Program the output voltage using the cached feedback ratio
+     * @param voltage Requested output in volts; must be within
+     *        [get_min_output_voltage(), get_max_output_voltage()]
+     * @return The voltage actually programmed (after quantisation)
      */
     expected<float> set_output_voltage(float voltage);
-
-    /**
-     * @brief Get output voltage
-     * @return expected<float> - output voltage or error
-     */
     expected<float> get_output_voltage() const;
 
-    // =============================================================================
-    // Current limit
-    // =============================================================================
+    /** @brief Upper bound accepted by set_output_voltage() (application safety limit) */
+    expected<void> set_output_voltage_limit(float max_voltage);
+    float get_min_output_voltage() const;
+    float get_max_output_voltage() const;
 
-    /**
-     * @brief Enable current limit
-     * @return expected<void> - error on failure
-     */
+    // ---- Current limit ---------------------------------------------------------------
     expected<void> enable_current_limit();
-
-    /**
-     * @brief Disable current limit
-     * @return expected<void> - error on failure
-     */
     expected<void> disable_current_limit();
-
-    /**
-     * @brief Check if current limit is enabled
-     * @return bool - true if enabled
-     */
-    bool current_limit_enabled() const;
-
-    /**
-     * @brief Set current limit sense voltage
-     * @param limit_mv Sense voltage in millivolts (0-63.5 mV)
-     * @return expected<void> - error on failure
-     */
+    expected<bool> current_limit_enabled() const;
     expected<void> set_current_limit_voltage_mv(float limit_mv);
-
-    /**
-     * @brief Get current limit sense voltage
-     * @return expected<float> - sense voltage in mV or error
-     */
     expected<float> get_current_limit_voltage_mv() const;
-
-    /**
-     * @brief Set output current limit
-     * @param current_a Output current limit in amperes
-     * @param sense_resistor_ohms Sense resistor value in ohms (optional, uses default if not provided)
-     * @return expected<void> - error on failure
-     */
+    /** @param sense_resistor_ohms <= 0 selects the stored sense resistor value */
     expected<void> set_output_current_limit(float current_a, float sense_resistor_ohms = -1.0f);
-
-    /**
-     * @brief Get output current limit
-     * @param sense_resistor_ohms Sense resistor value in ohms (optional, uses default if not provided)
-     * @return expected<float> - current limit in amperes or error
-     */
     expected<float> get_output_current_limit(float sense_resistor_ohms = -1.0f) const;
 
-    // =============================================================================
-    // Slew rate and OCP delay
-    // =============================================================================
-
-    /**
-     * @brief Set OCP delay
-     * @param delay_us OCP delay in microseconds (128, 3072, 6144, 12288)
-     * @return expected<void> - error on failure
-     */
+    // ---- Slew rate and OCP delay -----------------------------------------------------
     expected<void> set_ocp_delay_us(uint32_t delay_us);
-
-    /**
-     * @brief Get OCP delay
-     * @return expected<uint32_t> - OCP delay in microseconds or error
-     */
-    expected<uint32_t> get_ocp_delay_us();
-
-    /**
-     * @brief Set output voltage slew rate
-     * @param slew_rate_mv_us Slew rate in mV/us (1.25, 2.5, 5.0, 10.0)
-     * @return expected<void> - error on failure
-     */
+    expected<uint32_t> get_ocp_delay_us() const;
+    /** @brief Selects the fastest setting not above the request (1.25/2.5/5/10 mV/us) */
     expected<void> set_slew_rate_mv_us(float slew_rate_mv_us);
+    expected<float> get_slew_rate_mv_us() const;
 
-    /**
-     * @brief Get output voltage slew rate
-     * @return expected<float> - slew rate in mV/us or error
-     */
-    expected<float> get_slew_rate_mv_us();
-
-    // =============================================================================
-    // Feedback configuration
-    // =============================================================================
-
-    /**
-     * @brief Set feedback mode
-     * @param mode Feedback mode (Internal or External)
-     * @return expected<void> - error on failure
-     */
+    // ---- Feedback configuration ------------------------------------------------------
     expected<void> set_feedback_mode(FeedbackMode mode);
-
-    /**
-     * @brief Get feedback mode
-     * @return FeedbackMode - current feedback mode
-     */
-    FeedbackMode get_feedback_mode() const;
-
-    /**
-     * @brief Set internal feedback ratio
-     * @param bits Feedback ratio bits (0-3)
-     * @return expected<void> - error on failure
-     */
+    expected<FeedbackMode> get_feedback_mode() const;
     expected<void> set_internal_feedback_ratio(uint8_t bits);
-
-    /**
-     * @brief Get internal feedback ratio
-     * @return expected<float> - feedback ratio or error
-     */
     expected<float> get_internal_feedback_ratio() const;
+    /** @brief Cached ratio used for voltage conversion (valid after initialize()) */
+    float get_active_feedback_ratio() const { return feedback_ratio_; }
+    /** @brief Output voltage resolution in mV (0.5645 mV / ratio) */
+    float get_output_voltage_step_mv() const;
 
-    /**
-     * @brief Get active feedback ratio
-     * @return float - active feedback ratio
-     */
-    float get_active_feedback_ratio() const;
-
-    /**
-     * @brief Get output voltage step size in mV
-     * @return uint16_t - step size in millivolts
-     */
-    uint16_t get_output_voltage_step_mv() const;
-
-    // =============================================================================
-    // Cable droop compensation (CDC)
-    // =============================================================================
-
-    /**
-     * @brief Enable fault indication
-     * @param fault Fault type ("scp", "ocp", "ovp")
-     * @return expected<void> - error on failure
-     */
-    expected<void> enable_fault_indication(const std::string& fault);
-
-    /**
-     * @brief Disable fault indication
-     * @param fault Fault type ("scp", "ocp", "ovp")
-     * @return expected<void> - error on failure
-     */
-    expected<void> disable_fault_indication(const std::string& fault);
-
-    /**
-     * @brief Check if fault indication is enabled
-     * @param fault Fault type ("scp", "ocp", "ovp")
-     * @return bool - true if enabled
-     */
-    bool fault_indication_enabled(const std::string& fault) const;
-
-    /**
-     * @brief Set CDC option
-     * @param option CDC option (internal or external)
-     * @return expected<void> - error on failure
-     */
+    // ---- Cable droop compensation and fault indication (CDC, 05h) --------------------
+    expected<void> set_fault_indication(FaultIndication fault, bool enabled);
+    expected<bool> fault_indication_enabled(FaultIndication fault) const;
     expected<void> set_cdc_option(bool external);
-
-    /**
-     * @brief Get CDC option
-     * @return bool - true if external CDC
-     */
-    bool get_cdc_option() const;
-
-    /**
-     * @brief Set CDC compensation voltage
-     * @param compensation_v CDC compensation in volts (0-0.7 V)
-     * @return expected<void> - error on failure
-     */
+    expected<bool> get_cdc_option() const;
     expected<void> set_cdc_compensation_v(float compensation_v);
+    expected<float> get_cdc_compensation_v() const;
 
-    /**
-     * @brief Get CDC compensation voltage
-     * @return expected<float> - CDC compensation in volts or error
-     */
-    expected<float> get_cdc_compensation_v();
-
-    // =============================================================================
-    // Mode configuration
-    // =============================================================================
-
-    /**
-     * @brief Set FSW doubling
-     * @param enabled True to enable FSW doubling
-     * @return expected<void> - error on failure
-     */
+    // ---- Mode configuration (06h) ----------------------------------------------------
     expected<void> set_fsw_doubling(bool enabled);
-
-    /**
-     * @brief Check if FSW doubling is enabled
-     * @return bool - true if enabled
-     */
-    bool fsw_doubling_enabled() const;
-
-    /**
-     * @brief Set hiccup mode
-     * @param enabled True to enable hiccup mode
-     * @return expected<void> - error on failure
-     */
+    expected<bool> fsw_doubling_enabled() const;
     expected<void> set_hiccup_mode(bool enabled);
-
-    /**
-     * @brief Check if hiccup mode is enabled
-     * @return bool - true if enabled
-     */
-    bool hiccup_mode_enabled() const;
-
-    /**
-     * @brief Set VOUT discharge
-     * @param enabled True to enable VOUT discharge
-     * @return expected<void> - error on failure
-     */
+    expected<bool> hiccup_mode_enabled() const;
     expected<void> set_vout_discharge(bool enabled);
-
-    /**
-     * @brief Check if VOUT discharge is enabled
-     * @return bool - true if enabled
-     */
-    bool vout_discharge_enabled() const;
-
-    /**
-     * @brief Set light load mode
-     * @param fpwm True for FPWM mode, false for PFM mode
-     * @return expected<void> - error on failure
-     */
+    expected<bool> vout_discharge_enabled() const;
     expected<void> set_light_load_mode(bool fpwm);
+    expected<bool> light_load_mode_fpwm() const;
 
-    /**
-     * @brief Check if light load mode is FPWM
-     * @return bool - true if FPWM mode
-     */
-    bool light_load_mode_fpwm() const;
+    // ---- Status and faults -----------------------------------------------------------
+    /** @brief Read and decode STATUS once (clears the latched fault bits) */
+    expected<Status> read_status() const;
 
-    // =============================================================================
-    // Status and faults
-    // =============================================================================
-
-    /**
-     * @brief Read status register
-     * @return expected<uint8_t> - status register value or error
-     */
-    expected<uint8_t> read_status();
-
-    /**
-     * @brief Check for faults
-     * @return bool - true if any fault is present
-     */
-    bool has_fault() const;
-
-    /**
-     * @brief Check for short circuit fault
-     * @return bool - true if SCP is active
-     */
-    bool has_scp() const;
-
-    /**
-     * @brief Check for overcurrent fault
-     * @return bool - true if OCP is active
-     */
-    bool has_ocp() const;
-
-    /**
-     * @brief Check for overvoltage fault
-     * @return bool - true if OVP is active
-     */
-    bool has_ovp() const;
-
-    /**
-     * @brief Get operating mode
-     * @return OperatingMode - current operating mode
-     */
-    OperatingMode get_operating_mode() const;
-
-    // =============================================================================
-    // Static configuration values
-    // =============================================================================
-
-    /**
-     * @brief Get minimum reference voltage in mV
-     */
+    // ---- Static configuration values -------------------------------------------------
     static constexpr float get_vref_min_mv() { return 45.0f; }
-
-    /**
-     * @brief Get VREF LSB size in mV
-     */
     static constexpr float get_vref_lsb_mv() { return 0.5645f; }
-
-    /**
-     * @brief Get maximum REF code
-     */
     static constexpr uint16_t get_vref_max_code() { return 0x7FE; }
+    static constexpr float get_vref_max_mv() { return get_vref_min_mv() + get_vref_max_code() * get_vref_lsb_mv(); }
+    static constexpr float get_vout_min_v() { return 0.8f; }  // datasheet output range 0.8 V - 22 V
 
-    /**
-     * @brief Get I2C address
-     */
     uint8_t get_address() const { return address_; }
-
-    /**
-     * @brief Get sense resistor value
-     */
     float get_sense_resistor_ohms() const { return sense_resistor_ohms_; }
-
-    /**
-     * @brief Set sense resistor value
-     * @param ohms Sense resistor value in ohms
-     */
-    void set_sense_resistor_ohms(float ohms) { sense_resistor_ohms_ = ohms; }
-
-    /**
-     * @brief Get external feedback ratio
-     */
+    expected<void> set_sense_resistor_ohms(float ohms);
     float get_external_feedback_ratio() const { return external_feedback_ratio_; }
-
-    /**
-     * @brief Set external feedback ratio
-     * @param ratio External feedback ratio
-     */
-    void set_external_feedback_ratio(float ratio) { external_feedback_ratio_ = ratio; }
+    expected<void> set_external_feedback_ratio(float ratio);
 
 private:
-    mutable I2C_HandleTypeDef* hi2c_;
+    I2C_HandleTypeDef* hi2c_;
     uint8_t address_;
     float sense_resistor_ohms_;
     float external_feedback_ratio_;
+    float feedback_ratio_;        // active VOUT/VREF ratio, cached from VOUT_FS
+    float max_output_voltage_;    // application limit for set_output_voltage()
     bool initialized_;
 
     static constexpr float DEFAULT_SENSE_RESISTOR = 0.01f;
     static constexpr float DEFAULT_EXTERNAL_FB_RATIO = 0.1128f;
+    static constexpr float DEFAULT_INTERNAL_FB_RATIO = 0.0564f;  // VOUT_FS reset value 03h
 
-    /**
-     * @brief Convert HAL status to error code
-     */
     static std::error_code convertHALStatus(HAL_StatusTypeDef status);
-
-    /**
-     * @brief Validate REF code
-     */
-    static bool validate_ref_code(uint16_t code);
-
-    /**
-     * @brief Get feedback ratio bits from value
-     */
-    static uint8_t get_feedback_ratio_bits(float ratio);
-
-    /**
-     * @brief Get output step bits from value
-     */
-    static uint8_t get_output_step_bits(float step_mv);
-
-    /**
-     * @brief Get OCP delay bits from value
-     */
-    static uint8_t get_ocp_delay_bits(uint32_t delay_us);
-
-    /**
-     * @brief Get slew rate bits from value
-     */
-    static uint8_t get_slew_rate_bits(float slew_rate_mv_us);
+    static float intfb_bits_to_ratio(uint8_t bits);
+    expected<bool> read_flag(uint8_t register_addr, uint8_t mask) const;
+    expected<void> refresh_feedback_ratio();
 };
 
 } // namespace tps55289
