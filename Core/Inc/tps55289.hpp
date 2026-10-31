@@ -22,7 +22,7 @@
 #endif
 
 #ifndef TPS55289_TIMEOUT_MS
-#define TPS55289_TIMEOUT_MS 1000
+#define TPS55289_TIMEOUT_MS 20
 #endif
 
 // Include HAL headers if not in unit test mode
@@ -37,6 +37,10 @@ typedef enum {
     HAL_BUSY = 0x02,
     HAL_TIMEOUT = 0x03
 } HAL_StatusTypeDef;
+
+#define HAL_I2C_ERROR_BERR 0x01u
+#define HAL_I2C_ERROR_ARLO 0x02u
+#define HAL_I2C_ERROR_AF   0x04u
 
 // I2C memory address size (for HAL_I2C_Mem_Write and HAL_I2C_Mem_Read)
 #define I2C_MEMADD_SIZE_8BIT 0x01
@@ -64,6 +68,7 @@ extern "C" {
     HAL_StatusTypeDef HAL_I2C_Mem_Write(I2C_HandleTypeDef* hi2c, uint16_t DevAddress,
                                          uint16_t MemAddress, uint16_t MemAddSize,
                                          uint8_t* pData, uint16_t Size, uint32_t Timeout);
+    uint32_t HAL_I2C_GetError(const I2C_HandleTypeDef* hi2c);
     HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef* hi2c, uint16_t DevAddress,
                                         uint16_t MemAddress, uint16_t MemAddSize,
                                         uint8_t* pData, uint16_t Size, uint32_t Timeout);
@@ -178,7 +183,10 @@ enum class ErrorCode : uint8_t {
     InvalidRegister,
     NotInitialized,
     I2CError,
-    InvalidParameter
+    InvalidParameter,
+    // I2C failure classes (single-master bus, so ARLO also means a bus fault):
+    Nack,             // device did not acknowledge (absent, busy, or rejected the command)
+    BusError
 };
 
 /**
@@ -218,6 +226,8 @@ public:
             case ErrorCode::NotInitialized: return "Device not initialized";
             case ErrorCode::I2CError: return "I2C communication error";
             case ErrorCode::InvalidParameter: return "Invalid parameter";
+            case ErrorCode::Nack: return "I2C NACK (device not responding)";
+            case ErrorCode::BusError: return "I2C bus error";
             default: return "Unknown error";
         }
     }
@@ -395,7 +405,7 @@ private:
     static constexpr float DEFAULT_EXTERNAL_FB_RATIO = 0.1128f;
     static constexpr float DEFAULT_INTERNAL_FB_RATIO = 0.0564f;  // VOUT_FS reset value 03h
 
-    static std::error_code convertHALStatus(HAL_StatusTypeDef status);
+    std::error_code convertHALStatus(HAL_StatusTypeDef status) const;
     static float intfb_bits_to_ratio(uint8_t bits);
     expected<bool> read_flag(uint8_t register_addr, uint8_t mask) const;
     expected<void> refresh_feedback_ratio();

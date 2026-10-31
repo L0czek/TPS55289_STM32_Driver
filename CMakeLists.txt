@@ -172,10 +172,14 @@ target_compile_options(${PROJECT_NAME}
 # Compile Definitions
 # =============================================================================
 
+# Per-transfer I2C timeout. A register transfer takes < 1 ms at 100-400 kHz; a
+# long timeout lets one dead device block a shared bus for seconds.
+set(TPS55289_TIMEOUT_MS 20 CACHE STRING "TPS55289 I2C transfer timeout in ms")
+
 target_compile_definitions(${PROJECT_NAME}
     PUBLIC
         TPS55289_I2C_ADDRESS=0x74
-        TPS55289_TIMEOUT_MS=1000
+        TPS55289_TIMEOUT_MS=${TPS55289_TIMEOUT_MS}
 )
 
 # =============================================================================
@@ -246,7 +250,7 @@ if(TPS55289_BUILD_UNIT_TESTS)
             ${HAL_INCLUDE_PATHS}
             -D${TPS55289_MCU}
             -DTPS55289_I2C_ADDRESS=0x74
-            -DTPS55289_TIMEOUT_MS=1000
+            -DTPS55289_TIMEOUT_MS=${TPS55289_TIMEOUT_MS}
             -DTPS55289_UNIT_TEST
             -o ${CMAKE_CURRENT_BINARY_DIR}/test_tps55289.elf
             ${TEST_SOURCES}
